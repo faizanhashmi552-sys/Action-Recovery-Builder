@@ -18,7 +18,7 @@ on:
       DEVICE_TREE_URL:
         description: Device Tree URL
         required: true
-        default: https://github.com/TeamWin/android_device_asus_I003D
+        default: https://github.com/faizanhashmi552-sys/android_device_motorola_berlna-twrp
       DEVICE_TREE_BRANCH:
         description: Device Tree Branch
         required: true
@@ -26,13 +26,13 @@ on:
       DEVICE_PATH:
         description: Path the device tree should be synced to, relative to source root
         required: true
-        default: device/asus/I003D
+        default: device/motorola/berlna
       DEVICE_NAME:
         description: Device Name from tree (should match name on twrp_<DEVICE_NAME>.mk)
         required: true
-        default: I003D
+        default: berlna
       REPOPICK_PATCHES:
-        description: (Optional) Gerrit commit numbers separated by a space to be included in the build (leave blank if not using)
+        description: (Optional) Gerrit commit numbers separated by a space
         type: string
         required: false
       BUILD_TARGET:
@@ -43,7 +43,7 @@ on:
         - recovery
         - vendor_boot
         required: true
-        default: recovery
+        default: boot
       RECOVERY_INSTALLER:
         description: Include recovery installer zip
         type: boolean
@@ -54,7 +54,6 @@ jobs:
   build:
     if: github.event.repository.owner.id == github.event.sender.id
     runs-on: ubuntu-20.04
-    # You can use either of the ubuntu-20.04 or ubuntu-22.04 runner
     steps:
     - name: Display Run Parameters
       run: |
@@ -68,14 +67,11 @@ jobs:
         echo "Include Recovery Installer: ${{ inputs.RECOVERY_INSTALLER }}"
         echo "::endgroup::"
  
-    # You might want to Checkout your repo first, but not mandatory
     - name: Check Out
       uses: actions/checkout@v4
             
-    # Cleanup The Actions Workspace Using Custom Composite Run Actions
     - name: Cleanup
       uses: rokibhasansagar/slimhub_actions@main
-      # That's it! Now use your normal steps
 
     - name: Set Swap Space
       uses: pierotofy/set-swap-space@master
@@ -186,56 +182,11 @@ jobs:
       working-directory: workspace
       continue-on-error: true
 
-    - name: Repopick Gerrit patches
-      if: inputs.REPOPICK_PATCHES != null
-      run: |
-        source build/envsetup.sh
-        repopick -g https://gerrit.twrp.me ${{ inputs.REPOPICK_PATCHES }}
-      working-directory: workspace
-      continue-on-error: true
-
-    - name: Include Recovery Installer
-      if: inputs.RECOVERY_INSTALLER == true && inputs.MANIFEST_BRANCH != '6.0' && inputs.BUILD_TARGET != 'vendor_boot'
-      run: |
-        case ${{ inputs.MANIFEST_BRANCH }} in
-          7.1)
-            patchNum=5080
-            ;;
-          8.1)
-            patchNum=5079
-            ;;
-          9.0)
-            patchNum=5037
-            ;;
-          11)
-            patchNum=4964
-            ;;
-          12.1)
-            patchNum=5445
-            ;;
-        esac
-        source build/envsetup.sh
-        repopick -g https://gerrit.twrp.me ${patchNum}
-      working-directory: workspace
-      id: recoveryinstaller
-      continue-on-error: true
-
-    - name: Install Python 2
-      if: ${{ steps.buildtree.outputs.value == 'omni' }}
-      run: |
-        sudo apt -y install python2
-        cd /usr/bin
-        sudo ln -sf python2 python
-
     - name: Building recovery (AOSP)
       if: ${{ steps.buildtree.outputs.value == 'aosp' }} 
       run: |
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
-        if [ ${{ inputs.RECOVERY_INSTALLER }} = true ] && [ ${{ steps.recoveryinstaller.outcome == 'success' }} ]; then
-          export USE_RECOVERY_INSTALLER=true
-          export RECOVERY_INSTALLER_PATH=bootable/recovery/installer
-        fi
         lunch twrp_${{ inputs.DEVICE_NAME }}-eng && make $(tr -d _ <<< ${{ inputs.BUILD_TARGET }})image -j$(nproc --all)
       working-directory: workspace
 
@@ -244,10 +195,6 @@ jobs:
       run: |
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
-        if [ ${{ inputs.RECOVERY_INSTALLER }} = true ] && [ ${{ steps.recoveryinstaller.outcome == 'success' }} ]; then
-          export USE_RECOVERY_INSTALLER=true
-          export RECOVERY_INSTALLER_PATH=bootable/recovery/installer
-        fi
         lunch ${{ steps.buildtree.outputs.value }}_${{ inputs.DEVICE_NAME }}-eng && make ${{ inputs.BUILD_TARGET }}image -j$(nproc --all)
       working-directory: workspace
 
