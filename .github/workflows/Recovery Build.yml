@@ -24,31 +24,17 @@ on:
         required: true
         default: twrp-12.1
       DEVICE_PATH:
-        description: Path the device tree should be synced to, relative to source root
+        description: Device Path
         required: true
         default: device/motorola/berlna
       DEVICE_NAME:
-        description: Device Name from tree (should match name on twrp_<DEVICE_NAME>.mk)
+        description: Device Name
         required: true
         default: berlna
       REPOPICK_PATCHES:
-        description: (Optional) Gerrit commit numbers separated by a space
+        description: (Optional) Gerrit patches
         type: string
         required: false
-      BUILD_TARGET:
-        type: choice
-        description: Partition containing recovery ramdisk
-        options:
-        - boot
-        - recovery
-        - vendor_boot
-        required: true
-        default: boot
-      RECOVERY_INSTALLER:
-        description: Include recovery installer zip
-        type: boolean
-        required: true
-        default: false
 
 jobs:
   build:
@@ -65,8 +51,6 @@ jobs:
         echo "Device Tree Branch: ${{ inputs.DEVICE_TREE_BRANCH }}"
         echo "Device Path: ${{ inputs.DEVICE_PATH }}"
         echo "Device Name: ${{ inputs.DEVICE_NAME }}"
-        echo "Build Target: ${{ inputs.BUILD_TARGET }}.img"
-        echo "Include Recovery Installer: ${{ inputs.RECOVERY_INSTALLER }}"
         echo "::endgroup::"
 
     - name: Check Out
@@ -100,21 +84,6 @@ jobs:
         sudo add-apt-repository universe
         sudo apt -y install libncurses6
 
-    - name: Check Build Tree
-      uses: haya14busa/action-cond@v1.2.1
-      id: buildtree
-      with:
-        cond: ${{ inputs.MANIFEST_BRANCH == '11' || inputs.MANIFEST_BRANCH == '12.1' }}
-        if_true: aosp
-        if_false: omni
-
-    - name: Install OpenJDK
-      if: steps.buildtree.outputs.value == 'omni'
-      uses: actions/setup-java@v4
-      with:
-        distribution: zulu
-        java-version: 8
-
     - name: Install repo
       run: |
         mkdir -p ~/bin
@@ -129,20 +98,12 @@ jobs:
         git config --global user.name "${GITHUB_ACTOR}"
         git config --global user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
         repo init --depth=1 \
-          -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_${{ steps.buildtree.outputs.value }}.git \
+          -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
           -b twrp-${{ inputs.MANIFEST_BRANCH }}
 
     - name: Repo Sync
       run: |
         repo sync -j$(nproc --all) --force-sync --no-clone-bundle --no-tags
-      working-directory: workspace
-
-    - name: Create roomservice.xml
-      run: |
-        mkdir -p .repo/local_manifests
-        if [ -d "${GITHUB_WORKSPACE}/templates" ]; then
-          cp -f ${GITHUB_WORKSPACE}/templates/*.xml .repo/local_manifests/ || true
-        fi
       working-directory: workspace
 
     - name: Clone device tree
@@ -161,36 +122,41 @@ jobs:
         done
       working-directory: workspace
 
-    - name: Building recovery
+    - name: Building TWRP boot + vendor_boot
       run: |
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
         export LC_ALL=C
         lunch twrp_${{ inputs.DEVICE_NAME }}-eng || \
-          lunch ${{ steps.buildtree.outputs.value }}_${{ inputs.DEVICE_NAME }}-eng
-        make adbd ${{ inputs.BUILD_TARGET }}image -j$(nproc --all)
+          lunch aosp_${{ inputs.DEVICE_NAME }}-eng
+        make adbd bootimage vendorbootimage -j$(nproc --all)
       working-directory: workspace
 
-    - name: Check for recovery installer zip
-      if: ${{ inputs.RECOVERY_INSTALLER == 'true' }}
+    - name: Check output files
       run: |
-        ls workspace/out/target/product/${{ inputs.DEVICE_NAME }}/*.zip 2>/dev/null \
-          && echo "ZIP_EXISTS=true" >> $GITHUB_ENV \
-          || echo "ZIP_EXISTS=false" >> $GITHUB_ENV
+        echo "=== Output files ==="
+        ls -lh workspace/out/target/product/${{ inputs.DEVICE_NAME }}/boot.img || echo "boot.img NOT FOUND"
+        ls -lh workspace/out/target/product/${{ inputs.DEVICE_NAME }}/vendor_boot.img || echo "vendor_boot.img NOT FOUND"
 
     - name: Upload to Release
       uses: softprops/action-gh-release@v2
       if: success()
       with:
         files: |
-          workspace/out/target/product/${{ inputs.DEVICE_NAME }}/${{ inputs.BUILD_TARGET }}.img
-          workspace/out/target/product/${{ inputs.DEVICE_NAME }}/*.zip
-        name: ${{ inputs.DEVICE_NAME }} TWRP Build - ${{ github.run_id }}
+          workspace/out/target/product/${{ inputs.DEVICE_NAME }}/boot.img
+          workspace/out/target/product/${{ inputs.DEVICE_NAME }}/vendor_boot.img
+        name: ${{ inputs.DEVICE_NAME }} TWRP - ${{ github.run_id }}
         tag_name: ${{ github.run_id }}
         body: |
-          ## TWRP Build for ${{ inputs.DEVICE_NAME }}
-          - **Target:** `${{ inputs.BUILD_TARGET }}.img`
-          - **Manifest Branch:** `${{ inputs.MANIFEST_BRANCH }}`
-          - **Device Tree:** `${{ inputs.DEVICE_TREE_URL }}` @ `${{ inputs.DEVICE_TREE_BRANCH }}`
+          ## TWRP for ${{ inputs.DEVICE_NAME }}
+          - Branch: `${{ inputs.MANIFEST_BRANCH }}`
+          - Device Tree: `${{ inputs.DEVICE_TREE_BRANCH }}`
+
+          ## Flash instructions
+```
+          fastboot flash boot boot.img
+          fastboot flash vendor_boot vendor_boot.img
+          fastboot reboot
+```
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
