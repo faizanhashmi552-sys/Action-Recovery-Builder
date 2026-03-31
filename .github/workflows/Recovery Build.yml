@@ -22,7 +22,7 @@ on:
       DEVICE_TREE_BRANCH:
         description: Device Tree Branch
         required: true
-        default: android-12.1
+        default: twrp-12.1
       DEVICE_PATH:
         description: Path the device tree should be synced to, relative to source root
         required: true
@@ -75,11 +75,11 @@ jobs:
     - name: Cleanup and Free Disk Space
       run: |
         sudo apt-get clean
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup /var/lib/docker
-        docker rmi $(docker images -q) || true
-        sudo rm -rf /usr/local/share/boost
-        sudo rm -rf "$AGENT_TOOLSDIRECTORY"
-      
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+          /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup \
+          /var/lib/docker /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+        docker rmi $(docker images -q) 2>/dev/null || true
+
     - name: Set Swap Space
       uses: pierotofy/set-swap-space@master
       with:
@@ -89,8 +89,14 @@ jobs:
       run: |
         sudo apt update
         sudo apt -y upgrade
-        # Cleaned up package list for Ubuntu 24.04 (Noble)
-        sudo apt -y install gperf gcc-multilib gcc-10-multilib g++-multilib g++-10-multilib libc6-dev lib32ncurses-dev x11proto-core-dev libx11-dev tree lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc bc ccache lib32readline-dev liblz4-tool libncurses-dev libsdl1.2-dev libwxgtk3.2-dev libxml2 lzop pngcrush squashfs-tools imagemagick libbz2-dev lzma ncftp qemu-user-static libstdc++-10-dev libtinfo6 schedtool
+        sudo apt -y install \
+          gperf gcc-multilib gcc-10-multilib g++-multilib g++-10-multilib \
+          libc6-dev lib32ncurses-dev x11proto-core-dev libx11-dev tree \
+          lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc bc ccache \
+          lib32readline-dev liblz4-tool libncurses-dev libsdl1.2-dev \
+          libwxgtk3.2-dev libxml2 lzop pngcrush squashfs-tools imagemagick \
+          libbz2-dev lzma ncftp qemu-user-static libstdc++-10-dev \
+          libtinfo6 schedtool python3 python-is-python3
         sudo add-apt-repository universe
         sudo apt -y install libncurses6
 
@@ -111,19 +117,21 @@ jobs:
 
     - name: Install repo
       run: |
-        mkdir ~/bin
+        mkdir -p ~/bin
         curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
         chmod a+x ~/bin/repo
         sudo ln -sf ~/bin/repo /usr/bin/repo
-      
+
     - name: Initialize repo
       run: |
         mkdir workspace
         cd workspace
         git config --global user.name "${GITHUB_ACTOR}"
         git config --global user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
-        repo init --depth=1 -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_${{ steps.buildtree.outputs.value }}.git -b twrp-${{ inputs.MANIFEST_BRANCH }}
-          
+        repo init --depth=1 \
+          -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_${{ steps.buildtree.outputs.value }}.git \
+          -b twrp-${{ inputs.MANIFEST_BRANCH }}
+
     - name: Repo Sync
       run: |
         repo sync -j$(nproc --all) --force-sync --no-clone-bundle --no-tags
@@ -139,16 +147,36 @@ jobs:
 
     - name: Clone device tree
       run: |
-        git clone ${{ inputs.DEVICE_TREE_URL }} -b ${{ inputs.DEVICE_TREE_BRANCH }} ./${{ inputs.DEVICE_PATH }}
+        git clone ${{ inputs.DEVICE_TREE_URL }} \
+          -b ${{ inputs.DEVICE_TREE_BRANCH }} \
+          ./${{ inputs.DEVICE_PATH }}
+      working-directory: workspace
+
+    - name: Apply Repopick patches
+      if: ${{ inputs.REPOPICK_PATCHES != '' }}
+      run: |
+        source build/envsetup.sh
+        for patch in ${{ inputs.REPOPICK_PATCHES }}; do
+          repopick $patch
+        done
       working-directory: workspace
 
     - name: Building recovery
       run: |
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
-        lunch twrp_${{ inputs.DEVICE_NAME }}-eng || lunch ${{ steps.buildtree.outputs.value }}_${{ inputs.DEVICE_NAME }}-eng
-        make $(tr -d _ <<< ${{ inputs.BUILD_TARGET }})image -j$(nproc --all)
+        export LC_ALL=C
+        lunch twrp_${{ inputs.DEVICE_NAME }}-eng || \
+          lunch ${{ steps.buildtree.outputs.value }}_${{ inputs.DEVICE_NAME }}-eng
+        make adbd ${{ inputs.BUILD_TARGET }}image -j$(nproc --all)
       working-directory: workspace
+
+    - name: Check for recovery installer zip
+      if: ${{ inputs.RECOVERY_INSTALLER == 'true' }}
+      run: |
+        ls workspace/out/target/product/${{ inputs.DEVICE_NAME }}/*.zip 2>/dev/null \
+          && echo "ZIP_EXISTS=true" >> $GITHUB_ENV \
+          || echo "ZIP_EXISTS=false" >> $GITHUB_ENV
 
     - name: Upload to Release
       uses: softprops/action-gh-release@v2
@@ -157,10 +185,12 @@ jobs:
         files: |
           workspace/out/target/product/${{ inputs.DEVICE_NAME }}/${{ inputs.BUILD_TARGET }}.img
           workspace/out/target/product/${{ inputs.DEVICE_NAME }}/*.zip
-        name: ${{ inputs.DEVICE_NAME }} TWRP Build
+        name: ${{ inputs.DEVICE_NAME }} TWRP Build - ${{ github.run_id }}
         tag_name: ${{ github.run_id }}
         body: |
-          Build completed for ${{ inputs.DEVICE_NAME }}
-          Target: ${{ inputs.BUILD_TARGET }}.img
+          ## TWRP Build for ${{ inputs.DEVICE_NAME }}
+          - **Target:** `${{ inputs.BUILD_TARGET }}.img`
+          - **Manifest Branch:** `${{ inputs.MANIFEST_BRANCH }}`
+          - **Device Tree:** `${{ inputs.DEVICE_TREE_URL }}` @ `${{ inputs.DEVICE_TREE_BRANCH }}`
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
