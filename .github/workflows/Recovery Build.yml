@@ -148,15 +148,13 @@ jobs:
         name: ${{ inputs.DEVICE_NAME }} TWRP - ${{ github.run_id }}
         tag_name: ${{ github.run_id }}
         body: |
-          ## TWRP for ${{ inputs.DEVICE_NAME }}
-          - Branch: `${{ inputs.MANIFEST_BRANCH }}`
-          - Device Tree: `${{ inputs.DEVICE_TREE_BRANCH }}`
+          TWRP for ${{ inputs.DEVICE_NAME }}
+          Branch: ${{ inputs.MANIFEST_BRANCH }}
+          Device Tree: ${{ inputs.DEVICE_TREE_BRANCH }}
 
-          ## Flash instructions
-```
-          fastboot flash boot boot.img
-          fastboot flash vendor_boot vendor_boot.img
-          fastboot reboot
-```
+          Flash instructions
+          1. fastboot flash boot boot.img
+          2. fastboot flash vendor_boot vendor_boot.img
+          3. fastboot reboot
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
